@@ -1,0 +1,82 @@
+Análise de Veículos Clonados
+Identificação de inconsistências na fonte de dados
+
+Análise Exploratória com foco em buscar inconsistências
+Após consultar os detalhes e o esquema da tabela na interface do Bigquery, os seguintes passos consistem em garantir a qualidade dos dados para chegar a conclusões mais consistentes
+
+Valores nulos
+- data_hora_captura 
+
+   SELECT 
+      COUNT(*) as nulos
+    FROM
+      `rj-cetrio.desafio.readings_2024_06`
+    WHERE
+      datahora_captura IS NULL
+
+-- retorna 1816325 valores nulos, corresponde a 5% da base
+-- como ele retorna valores para data e hora do registro, será mantido
+-- esses valores são mantidos na base, pois pode se tratar de um erro ao processar os dados, mas as marcações parecem existrir
+-- não há outros campos com valores nulos
+
+
+valores não razoáveis
+- camera_latitude
+- camera_longitude
+
+    SELECT 
+      COUNT(*) as lat_long_0
+    FROM
+      `rj-cetrio.desafio.readings_2024_06`
+    WHERE 
+      camera_latitude = 0
+      OR camera_latitude = 0
+
+-- retorna 281223 resultados, corresponde a 0,73% da base
+-- cameras sem coordenadas identificáveis não devem ser mantidas na base, uma vez que não é possível verificar se sua localização está dentro do espaço de interesse para o projeto
+
+- datahora_captura
+
+    SELECT 
+    COUNT(*) as capturado_pre_registro
+    FROM
+    `rj-cetrio.desafio.readings_2024_06`
+    WHERE 
+    datahora_captura < datahora -- descarta casos onde o dado foi recebido antes do registro da câmera
+-- retorna 495797 resultados, corresponde a 1,36% da base
+-- esses valores não devem ser mantidos, pois é ilógico que dados sejam recebidos antes de terem sido gerados
+
+- camera_latitude
+- camera_longitude
+
+    WITH base as(
+SELECT
+  camera_latitude,
+  camera_longitude,
+  ST_GEOGPOINT(camera_longitude, camera_latitude) as coordenada_geografica
+FROM
+  `rj-cetrio.desafio.readings_2024_06`
+),
+
+bairros as (
+SELECT
+  id_bairro,
+  nome,
+  geometry
+FROM
+  `datario.dados_mestres.bairro`
+)
+
+SELECT DISTINCT
+  base.camera_longitude,
+  base.camera_latitude
+FROM
+base
+LEFT JOIN 
+  bairros b 
+  ON ST_CONTAINS(b.geometry, base.coordenada_geografica)
+WHERE nome IS NULL 
+
+-- retorna 8 valores distintos, dos quais 1 é de coordenadas = 0 e os demais correspondem a localizações fora do território terrestre do município, como coordenadas do oceano e regiões como São João de Mereti, Petrópolis, Pau Grande e até a Ilha de Madagascar
+-- o total de registros dessas localizações totaliza 593775, que corresponde a 1,63% da base
+-- esses resultados não devem ser mentidos na base
