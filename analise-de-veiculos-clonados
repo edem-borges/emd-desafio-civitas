@@ -1,0 +1,15 @@
+Análise de Veículos Clonados
+A identificação de possíveis veículos clonados será feita a partir de duas principais premissas, essas serão refletidas no código SQL
+
+Premissa 1: Tipos de veículo distintos, placas iguais
+- sempre que houver registros de placas iguais em veículos de tipo diferente, trata-se de um veículo com placa clonada
+
+Premissa 2: Tipos de veículo iguais, placas iguais
+- sempre que houver registros de placas iguais em veículos de mesmo, porém registrado em câmeras distintas na mesma hora e minuto (porém, não segundo) trata-se de um veículo com placa clonada
+
+Conclusões:
+- Existem pelo menos 717746 placas clonadas, o que representa 9,6% de todas as placas únicas registradas no período das marcações
+- Dessas clonagens:
+    tipos de veículo distintos, placas iguais: 293217 | 41,11%
+    tipos de veículo iguais, placas iguais: 292390 | 41,02%
+    clonagens de ambas as naturezas: 127139 | 17,84%
