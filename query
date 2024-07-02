@@ -1,0 +1,143 @@
+WITH base as( -- converte timestamps para o fuso-horário local, transforma bytes em string para facilitar manipulação e cria coordenadas geográficas a partir de lat e long das câmeras
+SELECT 
+DATETIME(datahora,"America/Sao_Paulo") as datahora,
+DATETIME(datahora_captura,"America/Sao_Paulo") as datahora_captura,
+TO_HEX(empresa) AS empresa,
+TO_HEX(placa) AS placa,
+TO_HEX(tipoveiculo) AS tipoveiculo,
+velocidade,
+camera_numero,
+camera_latitude,
+camera_longitude,
+ST_GEOGPOINT(camera_longitude, camera_latitude) as coordenada_geografica
+FROM
+`rj-cetrio.desafio.readings_2024_06`
+WHERE 
+camera_latitude <> 0 -- descarta registros de câmeras sem localização 
+AND datahora_captura >= datahora -- descarta casos onde o dado foi recebido antes do registro da câmera
+),
+
+bairros as (
+SELECT
+  id_bairro,
+  nome,
+  geometry
+FROM
+  `datario.dados_mestres.bairro`
+),
+
+subprefeituras as (
+SELECT
+  subprefeitura,
+  geometria
+FROM
+  `datario.dados_mestres.subprefeitura`
+),
+
+distancia_entre_bairros as ( -- calcula a distância entre as fronteiras de todos os pares de bairros do Rio
+SELECT
+  b1.nome,
+  b1.geometry,
+  b2.nome,
+  b2.geometry,
+  CONCAT(b1.nome," - ",b2.nome) as relacao_bairros,
+  ROUND(ST_DISTANCE(b1.geometry,b2.geometry) / 1000,0) as distancia_km
+FROM
+  bairros b1  
+CROSS JOIN bairros b2
+),
+
+base2 as ( -- traz nome do bairro onde o registro foi feito e nomeia empresas e veículos
+SELECT
+base.datahora,
+base.datahora_captura,
+CASE base.empresa
+  WHEN '1e2545af9d48c6' THEN 'alfa'
+  WHEN '0891967b413fa4' THEN 'bravo'
+  WHEN '2ce01a80c7f3d0' THEN 'charlie'
+END as empresa,
+base.placa,
+CASE base.tipoveiculo
+  WHEN 'e2e0029fc0d3e5' THEN 'v1'
+  WHEN '7a6376f47ca915' THEN 'v2'
+  WHEN '031cc0037e816d' THEN 'v3'
+  WHEN 'b88652111099ed' THEN 'v4'
+END as tipoveiculo,
+base.velocidade,
+base.camera_numero,
+base.camera_latitude,
+base.camera_longitude,
+base.coordenada_geografica,
+b.nome as nome_bairro,
+CASE 
+  WHEN s.subprefeitura IN('Ilhas do Governador/Fundão/Paquetá', 'Tijuca') THEN 'Zona Norte'
+  WHEN s.subprefeitura IN ('Barra da Tijuca', 'Grande Bangu', 'Jacarepaguá') THEN 'Zona Oeste'
+  WHEN s.subprefeitura = 'Centro e Centro Histórico' THEN 'Centro'
+  ELSE s.subprefeitura 
+END as zona
+FROM
+base
+INNER JOIN -- inner join elimina registros com coordenadas irregulares (lat,long =0 e locais fora dos limites municipais)
+  bairros b 
+  ON ST_CONTAINS(b.geometry, base.coordenada_geografica) -- identifica o bairro a partir da localização geográfica da câmera
+INNER JOIN
+  subprefeituras s 
+  ON ST_CONTAINS(s.geometria, base.coordenada_geografica)
+),
+
+clonados_tipos_diferentes as( -- regra para veículos clonados: mesma placa, tipo de veículo diferente
+SELECT DISTINCT
+  base2.placa,
+  base2.tipoveiculo
+FROM
+  base2
+INNER JOIN
+  (SELECT DISTINCT placa,tipoveiculo FROM base2) clonados
+  ON clonados.placa = base2.placa 
+  AND clonados.tipoveiculo <> base2.tipoveiculo 
+),
+
+clonados_tipos_e_horarios_iguais as( -- regra para veículos clonados: mesma placa, mesmo tipo de veículo, passou em radares diferentes no mesmo horário 
+SELECT DISTINCT
+  base2.placa,
+  base2.tipoveiculo
+FROM
+  base2
+INNER JOIN
+  (SELECT DISTINCT placa, tipoveiculo, datahora, camera_numero FROM base2) clonados
+  ON clonados.placa = base2.placa 
+  AND clonados.tipoveiculo = base2.tipoveiculo
+  AND clonados.camera_numero <> base2.camera_numero
+  AND DATETIME_TRUNC(clonados.datahora,minute) = DATETIME_TRUNC(base2.datahora,minute)  
+),
+
+base_placas_clonadas as ( -- placas únicas clonadas
+SELECT DISTINCT
+  base2.placa,
+ CASE 
+    WHEN ctd.placa IS NOT NULL OR cthi.placa IS NOT NULL THEN true ELSE false 
+  END as veiculo_clonado,
+  CASE 
+    WHEN ctd.placa IS NOT NULL AND cthi.placa IS NULL THEN 'veículos distintos' 
+    WHEN ctd.placa IS NULL AND cthi.placa IS NOT NULL THEN 'veículos iguais' 
+    WHEN ctd.placa IS NOT NULL AND cthi.placa IS NOT NULL THEN 'veículos iguais e veículos distintos' ELSE NULL 
+  END as tipo_de_clonagem  
+FROM
+  base2
+LEFT JOIN
+  clonados_tipos_diferentes ctd
+  ON ctd.placa = base2.placa
+LEFT JOIN
+  clonados_tipos_e_horarios_iguais cthi
+  ON cthi.placa = base2.placa
+)
+
+SELECT
+  base2.*,
+  veiculo_clonado,
+  tipo_de_clonagem
+FROM
+  base2
+LEFT JOIN
+  base_placas_clonadas bpc
+  ON bpc.placa = base2.placa
